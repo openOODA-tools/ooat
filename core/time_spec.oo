@@ -1,0 +1,137 @@
+// # Time Specification Parser for ooat
+//
+// Logline: Parses human-readable scheduling expressions into systemd timer directives.
+//
+// Setup: Pure string analyzer without ambient side effects.
+//
+// Beats:
+//   1. Normalize relative and absolute scheduling syntax.
+//   2. Parse seconds, minutes, hours, and days into systemd OnActiveSec intervals.
+//   3. Validate calendar timestamp patterns for systemd OnCalendar triggers.
+
+pub type TimeSpec = struct {
+    raw_input: String,
+    kind: String,
+    timer_spec: String,
+    seconds_delay: Int,
+    is_valid: Bool,
+    error_msg: String
+};
+
+fn is_ascii_digit(b: Int) -> Bool {
+    return b >= 48 && b <= 57;
+}
+
+pub fn parse_int_safe(s: String, default_val: Int) -> Int {
+    let n: Int = chars_len(s);
+    if n == 0 { return default_val; }
+    let mut acc: Int = 0;
+    let mut i: Int = 0;
+    while i < n {
+        let b: Int = byte_at(s, i);
+        if !is_ascii_digit(b) {
+            return default_val;
+        }
+        acc = acc * 10 + (b - 48);
+        i = i + 1;
+    }
+    return acc;
+}
+
+pub fn parse_time_spec(input: String) -> TimeSpec {
+    let mut spec: String = str_trim(input);
+
+    if str_starts_with(spec, "now +") {
+        spec = str_trim(str_slice(spec, 5, chars_len(spec)));
+    } else if str_starts_with(spec, "now+") {
+        spec = str_trim(str_slice(spec, 4, chars_len(spec)));
+    } else if str_starts_with(spec, "+") {
+        spec = str_trim(str_slice(spec, 1, chars_len(spec)));
+    }
+
+    let n: Int = chars_len(spec);
+    if n == 0 {
+        return TimeSpec {
+            raw_input: input,
+            kind: "invalid",
+            timer_spec: "",
+            seconds_delay: 0,
+            is_valid: false,
+            error_msg: "Empty time specification"
+        };
+    }
+
+    let last_char: String = char_at(spec, n - 1);
+    if last_char == "s" || last_char == "m" || last_char == "h" || last_char == "d" {
+        let num_str: String = str_slice(spec, 0, n - 1);
+        let val: Int = parse_int_safe(num_str, -1);
+        if val <= 0 {
+            return TimeSpec {
+                raw_input: input,
+                kind: "invalid",
+                timer_spec: "",
+                seconds_delay: 0,
+                is_valid: false,
+                error_msg: "Invalid numeric duration"
+            };
+        }
+
+        let mut multiplier: Int = 1;
+        let mut unit_suffix: String = "s";
+        if last_char == "s" {
+            multiplier = 1;
+            unit_suffix = "s";
+        } else if last_char == "m" {
+            multiplier = 60;
+            unit_suffix = "m";
+        } else if last_char == "h" {
+            multiplier = 3600;
+            unit_suffix = "h";
+        } else if last_char == "d" {
+            multiplier = 86400;
+            unit_suffix = "d";
+        }
+
+        let total_seconds: Int = val * multiplier;
+        return TimeSpec {
+            raw_input: input,
+            kind: "active",
+            timer_spec: to_string(val) + unit_suffix,
+            seconds_delay: total_seconds,
+            is_valid: true,
+            error_msg: ""
+        };
+    }
+
+    if str_contains(spec, ":") {
+        return TimeSpec {
+            raw_input: input,
+            kind: "calendar",
+            timer_spec: "*-*-* " + spec + ":00",
+            seconds_delay: 0,
+            is_valid: true,
+            error_msg: ""
+        };
+    }
+
+    let all_digits_val: Int = parse_int_safe(spec, -1);
+    if all_digits_val > 0 {
+        return TimeSpec {
+            raw_input: input,
+            kind: "active",
+            timer_spec: to_string(all_digits_val) + "m",
+            seconds_delay: all_digits_val * 60,
+            is_valid: true,
+            error_msg: ""
+        };
+    }
+
+    return TimeSpec {
+        raw_input: input,
+        kind: "calendar",
+        timer_spec: spec,
+        seconds_delay: 0,
+        is_valid: true,
+        error_msg: ""
+    };
+}

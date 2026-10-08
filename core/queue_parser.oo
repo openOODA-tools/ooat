@@ -1,0 +1,80 @@
+// # Timer Queue and Unit Output Parser
+//
+// Logline: Parses systemd timer lists and ooat unit status reports into structured job records.
+//
+// Setup: Pure string parser without ambient authority.
+//
+// Beats:
+//   1. Split multi-line systemctl list-timers or journal outputs into lines.
+//   2. Filter for ooat-job- transient unit names and extract next elapse times.
+//   3. Construct collection of AtJob records.
+
+import "core/job_entry.oo";
+
+fn split_lines(content: String) -> List[String] {
+    let mut lines: List[String] = list_new();
+    let n: Int = chars_len(content);
+    let mut cur: String = "";
+    let mut i: Int = 0;
+
+    while i < n {
+        let c: String = char_at(content, i);
+        if c == "\n" {
+            lines = list_push(lines, cur);
+            cur = "";
+        } else if c != "\r" {
+            cur = cur + c;
+        }
+        i = i + 1;
+    }
+    if chars_len(cur) > 0 {
+        lines = list_push(lines, cur);
+    }
+    return lines;
+}
+
+fn find_substr(haystack: String, needle: String) -> Int {
+    let nh: Int = chars_len(haystack);
+    let nn: Int = chars_len(needle);
+    if nn == 0 { return 0; }
+    if nh < nn { return -1; }
+    let mut i: Int = 0;
+    while i <= nh - nn {
+        let sub: String = str_slice(haystack, i, i + nn);
+        if sub == needle {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+pub fn parse_timer_list(output: String) -> List[AtJob] {
+    let lines: List[String] = split_lines(output);
+    let mut jobs: List[AtJob] = list_new();
+    let n: Int = list_len(lines);
+    let mut i: Int = 0;
+    let prefix: String = job_unit_prefix();
+
+    while i < n {
+        let line: String = list_get(lines, i);
+        if str_contains(line, prefix) {
+            let p_idx: Int = find_substr(line, prefix);
+            if p_idx >= 0 {
+                let mut end_idx: Int = p_idx;
+                let line_len: Int = chars_len(line);
+                while end_idx < line_len && char_at(line, end_idx) != " " && char_at(line, end_idx) != "\t" && char_at(line, end_idx) != "." {
+                    end_idx = end_idx + 1;
+                }
+                let full_unit: String = str_slice(line, p_idx, end_idx);
+                let id: String = str_slice(full_unit, chars_len(prefix), chars_len(full_unit));
+                let trigger: String = str_trim(str_slice(line, 0, p_idx));
+                let job: AtJob = make_at_job(id, full_unit, trigger, "[transient-command]", "active");
+                jobs = list_push(jobs, job);
+            }
+        }
+        i = i + 1;
+    }
+
+    return jobs;
+}

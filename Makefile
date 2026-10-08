@@ -1,21 +1,181 @@
-# ==============================================================================
-# ooat: ONESHOT TIMER
-# Verification and Lifecycle Makefile
-# ==============================================================================
+# ooat v0.2.0 Makefile
 
-SHELL := /bin/sh
+OODA_COMPILER ?= $(firstword $(wildcard $(HOME)/.openooda/bin/oodac $(CURDIR)/../../openOODA/oodac/bin/oodac))
+OODACODEX ?= $(HOME)/.openooda/northstar.oot
+OO_LIST_AMBIENT_QUOTA ?= 8589934592
+BIN := dist/ooat
 
-.PHONY: all verify test clean
+PREFIX ?= /usr/local
+BINDIR ?= $(PREFIX)/bin
 
-all: verify
+SRC := $(wildcard *.oo) $(wildcard */*.oo)
+VERSION ?= $(shell cat VERSION 2>/dev/null || echo 0.2.0)
 
-verify:
-	@echo "==> Auditing openOODA House Laws & Page Rules..."
-	@python3 qa/verify_pages.py
+.PHONY: build check line-cap file-law academy density verify clean test package package-deb package-rpm package-arch install uninstall
 
-test: verify
-	@echo "==> Running negative-trust verification suite..."
-	@echo "All tests passed."
+build: $(BIN)
+
+$(BIN): $(SRC)
+	@mkdir -p dist .ooda-cache/ooda-tmp
+	OO_LIST_AMBIENT_QUOTA=$(OO_LIST_AMBIENT_QUOTA) OODACODEX=$(OODACODEX) OODA_COMPILER=$(OODA_COMPILER) OODA_NO_JAIL=1 $(OODA_COMPILER) build main.oo -o $(BIN)
+	@chmod +x $(BIN)
+	@cp -a $(BIN) dist/ooat-linux-x86_64
+	@sha256sum dist/ooat-linux-x86_64 > dist/ooat-linux-x86_64.sha256
+	@echo "built $(BIN) (and dist/ooat-linux-x86_64)"
+
+# --- Verification gate ---------------------------------------------------------
+
+line-cap:
+	@violations=0; \
+	for f in $$(find . -name "*.oo" -o -name "*.oot" | grep -v "/dist/" | grep -v "/.ooda-cache/"); do \
+		n=$$(wc -l < "$$f"); \
+		if [ $$n -gt 256 ]; then \
+			echo "VIOLATION: $$f = $$n lines (exceeds 256)"; violations=$$((violations+1)); \
+			continue; \
+		fi; \
+		code=$$(grep -vE '^[[:space:]]*(//.*)?$$' "$$f" | grep -cvE '^[[:space:]]*import[[:space:]]+"'); \
+		if [ "$$code" = "0" ]; then continue; fi; \
+		if [ $$n -lt 16 ]; then \
+			echo "VIOLATION: $$f = $$n lines (under 16-line floor, not a shim)"; violations=$$((violations+1)); \
+		fi; \
+	done; \
+	if [ $$violations -gt 0 ]; then echo "FAIL: $$violations files violate the Page Rule"; exit 1; fi; \
+	echo "PASS: Page Rule sizing (16-256 lines, shims exempt from floor) holds"
+
+file-law:
+	@forbidden="js ts rb pl json yaml toml"; \
+	violations=0; \
+	for ext in $$forbidden; do \
+		found=$$(find . -name "*.$$ext" -not -path "./.git/*" -not -path "./.github/*" -not -path "./dist/*" -not -path "./.ooda-cache/*" 2>/dev/null | head -3); \
+		if [ -n "$$found" ]; then \
+			echo "VIOLATION: .$$ext forbidden:"; echo "$$found"; violations=$$((violations+1)); \
+		fi; \
+	done; \
+	for f in $$(find . -name "*.md" -not -path "./.git/*" -not -path "./.github/*" -not -path "./dist/*" -not -path "./.ooda-cache/*" 2>/dev/null); do \
+		if [ "$$f" != "./README.md" ] && [ "$$f" != "./AGENTS.md" ]; then \
+			echo "VIOLATION: .md forbidden outside README.md and AGENTS.md: $$f"; violations=$$((violations+1)); \
+		fi; \
+	done; \
+	for f in $$(find . -name "*.sh" -not -path "./.git/*" -not -path "./dist/*" 2>/dev/null); do \
+		if [ "$$f" != "./install.sh" ] && [ "$$f" != "./uninstall.sh" ]; then \
+			echo "VIOLATION: .sh forbidden outside install.sh and uninstall.sh: $$f"; violations=$$((violations+1)); \
+		fi; \
+	done; \
+	if [ $$violations -gt 0 ]; then echo "FAIL: file-law violations"; exit 1; fi; \
+	echo "PASS: file law holds"
+
+academy:
+	@failures=0; \
+	for f in $$(find . -name "*.oo" -not -path "./dist/*"); do \
+		header=$$(head -7 "$$f"); \
+		missing=""; \
+		echo "$$header" | grep -q "^// # "        || missing="$$missing title"; \
+		echo "$$header" | grep -q "^// Logline:"  || missing="$$missing logline"; \
+		echo "$$header" | grep -q "^// Setup:"    || missing="$$missing setup"; \
+		echo "$$header" | grep -q "^// Beats:"    || missing="$$missing beats"; \
+		if [ -n "$$missing" ]; then \
+			echo "FAIL: $$f missing Academy element(s):$$missing"; failures=$$((failures+1)); \
+		fi; \
+	done; \
+	if [ $$failures -gt 0 ]; then echo "FAIL: $$failures academy header violations"; exit 1; fi; \
+	echo "PASS: academy headers hold (all 4 elements present in first 7 lines)"
+
+density:
+	@violations=0; \
+	for d in $$(find . -type d -not -path "./.git*" -not -path "./dist*" -not -path "./.ooda-cache*" -not -path "./packaging*" -not -path "./qa*"); do \
+		n=$$(ls "$$d"/*.oo "$$d"/*.oot 2>/dev/null | grep -v '\*' | wc -l); \
+		if [ $$n -gt 8 ]; then \
+			echo "VIOLATION: $$d holds $$n pages (exceeds 8)"; violations=$$((violations+1)); \
+		fi; \
+	done; \
+	if [ $$violations -gt 0 ]; then echo "FAIL: $$violations directories exceed the density bound"; exit 1; fi; \
+	echo "PASS: directory density (<= 8 pages per directory) holds"
+
+check:
+	@for f in $$(find . -name "*.oo" -not -path "./dist/*"); do \
+		OO_LIST_AMBIENT_QUOTA=$(OO_LIST_AMBIENT_QUOTA) OODACODEX=$(OODACODEX) OODA_COMPILER=$(OODA_COMPILER) OODA_NO_JAIL=1 $(OODA_COMPILER) check "$$f" > /dev/null || exit 1; \
+	done; \
+	echo "PASS: oodac check holds on all .oo files"
+
+verify: line-cap file-law academy density check
+
+test: $(BIN)
+	@echo "=== testing --help ==="
+	@./$(BIN) --help > /dev/null && echo "PASS: --help"
+	@echo "=== testing --version ==="
+	@./$(BIN) --version | grep -q "0.2.0" && echo "PASS: --version"
+	@echo "=== testing relative delay dry-run ==="
+	@./$(BIN) --dry-run "now + 5m" /bin/echo hello | grep -q "OnActiveSec=5m" && echo "PASS: relative delay dry-run"
+	@echo "=== testing calendar spec dry-run ==="
+	@./$(BIN) --dry-run "14:30" /bin/echo hello | grep -q "OnCalendar" && echo "PASS: calendar spec dry-run"
+	@echo "=== testing dry-run json mode ==="
+	@./$(BIN) --dry-run --json "30s" /bin/true | grep -q '"timer_spec":"30s"' && echo "PASS: dry-run json mode"
+	@echo "=== testing list queues ==="
+	@./$(BIN) --list | grep -q "ooat" && echo "PASS: list queues"
+	@./$(BIN) --list --json | grep -q "\[\]" && echo "PASS: list json"
+	@echo "=== testing cancellation ==="
+	@./$(BIN) --delete 42 | grep -q "cancelled job #42" && echo "PASS: cancel job"
+	@./$(BIN) --delete 42 --json | grep -q '"status":"cancelled"' && echo "PASS: cancel job json"
+	@echo "=== testing MCP initialize ==="
+	@printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}\n' | ./$(BIN) --mcp | grep -q "protocolVersion" && echo "PASS: MCP initialize"
+	@echo "=== testing MCP tools/list ==="
+	@printf '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}\n' | ./$(BIN) --mcp | grep -q "at_schedule" && echo "PASS: MCP tools/list"
+	@echo "=== testing MCP tools/call at_parse_time ==="
+	@printf '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"at_parse_time","arguments":{"time_spec":"+15m"}}}\n' | ./$(BIN) --mcp | grep -q 'timer_spec.*15m' && echo "PASS: MCP at_parse_time"
+	@echo "=== testing MCP tools/call at_schedule ==="
+	@printf '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"at_schedule","arguments":{"time_spec":"now + 1h","command":"date","dry_run":true}}}\n' | ./$(BIN) --mcp | grep -q 'success' && echo "PASS: MCP at_schedule"
+	@echo "=== testing MCP tools/call at_cancel ==="
+	@printf '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"at_cancel","arguments":{"job_id":"99"}}}\n' | ./$(BIN) --mcp | grep -q 'cancelled' && echo "PASS: MCP at_cancel"
+	@echo "ALL TESTS PASSED"
+
+install: $(BIN)
+	@mkdir -p $(DESTDIR)$(BINDIR)
+	install -m 0755 $(BIN) $(DESTDIR)$(BINDIR)/ooat
+	install -m 0755 uninstall.sh $(DESTDIR)$(BINDIR)/ooat-uninstall
+	@echo "installed ooat and ooat-uninstall to $(DESTDIR)$(BINDIR)"
+
+uninstall:
+	@rm -f $(DESTDIR)$(BINDIR)/ooat $(DESTDIR)$(BINDIR)/ooat-uninstall
+	@if [ "$(PURGE)" = "1" ]; then rm -rf $(HOME)/.cache/ooat $(HOME)/.config/ooat; echo "purged user cache and config"; fi
+	@echo "uninstalled ooat and ooat-uninstall from $(DESTDIR)$(BINDIR)"
+
+package-deb: $(BIN)
+	@mkdir -p dist/deb-root/DEBIAN dist/deb-root/usr/bin
+	@sed "s/^Version:.*/Version: $(VERSION)-1/" packaging/debian/control.binary > dist/deb-root/DEBIAN/control
+	@cp $(BIN) dist/deb-root/usr/bin/ooat
+	@chmod 0755 dist/deb-root/usr/bin/ooat
+	@cp uninstall.sh dist/deb-root/usr/bin/ooat-uninstall
+	@chmod 0755 dist/deb-root/usr/bin/ooat-uninstall
+	@dpkg-deb --build --root-owner-group dist/deb-root dist/ooat_$(VERSION)-1_amd64.deb
+	@rm -rf dist/deb-root
+	@echo "built dist/ooat_$(VERSION)-1_amd64.deb"
+
+package-rpm: $(BIN)
+	@mkdir -p ~/rpmbuild/SOURCES ~/rpmbuild/SPECS ~/rpmbuild/RPMS
+	@cp $(BIN) ~/rpmbuild/SOURCES/ooat-linux-x86_64
+	@cp uninstall.sh ~/rpmbuild/SOURCES/uninstall.sh
+	@sed "s/^Version:.*/Version: $(VERSION)/" packaging/ooat.spec > ~/rpmbuild/SPECS/ooat.spec
+	@rpmbuild -bb ~/rpmbuild/SPECS/ooat.spec
+	@cp ~/rpmbuild/RPMS/x86_64/ooat-$(VERSION)*.rpm dist/
+	@echo "built dist RPM package"
+
+package-arch: $(BIN)
+	@mkdir -p dist/arch-pkg/usr/bin
+	@cp $(BIN) dist/arch-pkg/usr/bin/ooat
+	@chmod 0755 dist/arch-pkg/usr/bin/ooat
+	@cp uninstall.sh dist/arch-pkg/usr/bin/ooat-uninstall
+	@chmod 0755 dist/arch-pkg/usr/bin/ooat-uninstall
+	@printf "pkgname = ooat\npkgbase = ooat\npkgver = $(VERSION)-1\npkgdesc = Single-run scheduled command coordinator backed by transient systemd timer units.\nurl = https://github.com/openOODA-tools/ooat\nbuilddate = $$(date +%s)\npackager = openOODA-tools <ops@openooda.org>\nsize = $$(stat -c %s $(BIN))\narch = x86_64\nlicense = Apache-2.0\ndepend = glibc\nprovides = ooat\n" > dist/arch-pkg/.PKGINFO
+	@tar --zstd -cf dist/ooat-$(VERSION)-1-x86_64.pkg.tar.zst -C dist/arch-pkg .PKGINFO usr
+	@rm -rf dist/arch-pkg
+	@bash -n packaging/arch/PKGBUILD
+	@cp packaging/arch/PKGBUILD packaging/PKGBUILD
+	@echo "built dist/ooat-$(VERSION)-1-x86_64.pkg.tar.zst and validated PKGBUILD"
+
+package: package-deb package-rpm package-arch
+	@cd dist && sha256sum ooat* > checksums.txt 2>/dev/null || true
+	@echo "built all packages and dist/checksums.txt"
 
 clean:
-	@rm -rf dist/ build/
+	@rm -rf dist .ooda-cache
+	@echo "cleaned"

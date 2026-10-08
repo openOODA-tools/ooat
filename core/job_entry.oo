@@ -1,0 +1,42 @@
+// # Scheduled Job Record Model
+//
+// Logline: Data structures and status helpers for transient scheduled jobs.
+//
+// Setup: Pure record definition for ooat scheduled task tracking.
+//
+// Beats:
+//   1. Define AtJob record capturing job ID, systemd unit, trigger time, and command.
+//   2. Provide constructor functions with default values.
+//   3. Implement status classification and identifier helpers.
+
+pub type AtJob = struct {
+    id: String,
+    unit_name: String,
+    trigger_time: String,
+    command: String,
+    state: String
+};
+
+pub fn make_at_job(
+    id: String,
+    unit_name: String,
+    trigger_time: String,
+    command: String,
+    state: String
+) -> AtJob {
+    return AtJob {
+        id: id,
+        unit_name: unit_name,
+        trigger_time: trigger_time,
+        command: command,
+        state: state
+    };
+}
+
+pub fn is_active_job(job: AtJob) -> Bool {
+    return job.state == "active" || job.state == "waiting" || job.state == "running";
+}
+
+pub fn job_unit_prefix() -> String {
+    return "ooat-job-";
+}

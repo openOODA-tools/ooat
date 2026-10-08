@@ -1,13 +1,18 @@
-// # ooat Root Anchor
+// # ooat Root Component Anchor
 //
-// Logline: Top-level anchor re-exporting options, core logic, render, and ipc subsystems.
+// Logline: Consolidates core engines, terminal renderers, and IPC communication layers.
 //
-// Setup: Pure shim re-exporting all ooat subsystem anchors.
+// Setup: Root barrel shim for the ooat executable.
 //
 // Beats:
-//   1. Re-export options parsing subsystem.
-//   2. Re-export core ooat execution engine.
-//   3. Re-export render formatting subsystem.
-//   4. Re-export Model Context Protocol (MCP) IPC subsystem.
+//   1. Re-export core time parsers, AtJob models, and transient timer generators.
+//   2. Re-export render formatters and terminal table styling components.
+//   3. Re-export IPC option parsers and Model Context Protocol servers.
 
-import "main.oo";
+import "core/anchor.oo";
+import "render/anchor.oo";
+import "ipc/anchor.oo";
+
+pub fn at_version() -> String {
+    return "0.2.0";
+}

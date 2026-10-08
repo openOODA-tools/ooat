@@ -1,0 +1,87 @@
+// # ooat Terminal and JSON Formatter
+//
+// Logline: Formats scheduled jobs, systemd unit definitions, and JSON payloads.
+//
+// Setup: Pure string formatter without ambient side effects.
+//
+// Beats:
+//   1. Render tabular representations of scheduled jobs and timers.
+//   2. Format transient systemd unit definitions for inspection and dry runs.
+//   3. Serialize job queues and time specifications into structured JSON.
+
+import "core/time_spec.oo";
+import "core/job_entry.oo";
+import "core/timer_transient.oo";
+
+pub fn escape_json(s: String) -> String {
+    let mut out: String = "";
+    let n: Int = chars_len(s);
+    let mut i: Int = 0;
+    while i < n {
+        let c: String = char_at(s, i);
+        if c == "\\" {
+            out = out + "\\\\";
+        } else if c == "\"" {
+            out = out + "\\\"";
+        } else if c == "\n" {
+            out = out + "\\n";
+        } else if c == "\r" {
+            out = out + "\\r";
+        } else if c == "\t" {
+            out = out + "\\t";
+        } else {
+            out = out + c;
+        }
+        i = i + 1;
+    }
+    return out;
+}
+
+pub fn render_job_row(job: AtJob) -> String {
+    return "#" + job.id + "\t" + job.trigger_time + "\t" + job.state + "\t" + job.command;
+}
+
+pub fn render_job_table(jobs: List[AtJob]) -> String {
+    let n: Int = list_len(jobs);
+    if n == 0 {
+        return "No scheduled ooat jobs found in active user slice.";
+    }
+    let mut out: String = "JOB_ID\tTRIGGER\tSTATE\tCOMMAND\n";
+    let mut i: Int = 0;
+    while i < n {
+        let job: AtJob = list_get(jobs, i);
+        out = out + render_job_row(job) + "\n";
+        i = i + 1;
+    }
+    return out;
+}
+
+pub fn render_timer_preview(timer: TransientTimer) -> String {
+    let mut out: String = "=== Transient Systemd Timer Specification ===\n";
+    out = out + "Unit: " + timer.unit_name + "\n\n";
+    out = out + "--- " + timer.unit_name + ".timer ---\n" + timer.timer_content + "\n";
+    out = out + "--- " + timer.unit_name + ".service ---\n" + timer.service_content + "\n";
+    out = out + "--- Transient Invocation ---\n" + timer.run_command;
+    return out;
+}
+
+pub fn render_job_json(job: AtJob) -> String {
+    let mut j: String = "{";
+    j = j + "\"id\":\"" + escape_json(job.id) + "\",";
+    j = j + "\"unit\":\"" + escape_json(job.unit_name) + "\",";
+    j = j + "\"trigger\":\"" + escape_json(job.trigger_time) + "\",";
+    j = j + "\"command\":\"" + escape_json(job.command) + "\",";
+    j = j + "\"state\":\"" + escape_json(job.state) + "\"}";
+    return j;
+}
+
+pub fn render_time_spec_json(spec: TimeSpec) -> String {
+    let mut j: String = "{";
+    j = j + "\"valid\":" + (if spec.is_valid { "true" } else { "false" }) + ",";
+    j = j + "\"raw\":\"" + escape_json(spec.raw_input) + "\",";
+    j = j + "\"kind\":\"" + escape_json(spec.kind) + "\",";
+    j = j + "\"timer_spec\":\"" + escape_json(spec.timer_spec) + "\",";
+    j = j + "\"seconds_delay\":" + to_string(spec.seconds_delay) + ",";
+    j = j + "\"error\":\"" + escape_json(spec.error_msg) + "\"}";
+    return j;
+}

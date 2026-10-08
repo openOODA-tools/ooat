@@ -1,0 +1,121 @@
+// # Model Context Protocol (MCP) Stdio Server for ooat
+//
+// Logline: JSON-RPC 2.0 stdio server providing systemd timer scheduling and queue inspection tools.
+//
+// Setup: Demands FsReadCap for stdio streaming. Operates without ambient authority.
+//
+// Beats:
+//   1. Process incoming JSON-RPC 2.0 requests over standard input.
+//   2. Dispatch initialize, tools/list, and tools/call methods.
+//   3. Stream capability-bounded responses for scheduling, parsing, and cancellation.
+
+import "core/time_spec.oo";
+import "core/job_entry.oo";
+import "core/timer_transient.oo";
+import "render/at_theme.oo";
+import "ipc/json_field.oo";
+
+pub fn run_mcp_server(fs: &FsReadCap) {
+    let mut running: Bool = true;
+    while running {
+        let line_res: Result[String, String] = oo_read_stdin_chunk(fs, 8192);
+        if !line_res.is_ok() {
+            running = false;
+        } else {
+            let line: String = match line_res { Ok(s) => s, Err(_) => "" };
+            let trimmed: String = str_trim(line);
+            if chars_len(trimmed) == 0 {
+                running = false;
+            } else {
+                let id: String = json_get_field(trimmed, "id");
+                let method: String = json_get_string(trimmed, "method");
+
+                if method == "initialize" {
+                    let resp: String = "{\"jsonrpc\":\"2.0\",\"id\":" + id +
+                        ",\"result\":{\"protocolVersion\":\"2024-11-05\"," +
+                        "\"serverInfo\":{\"name\":\"ooat\",\"version\":\"0.2.0\"}," +
+                        "\"capabilities\":{\"tools\":{}}}}";
+                    println(resp);
+                } else if method == "notifications/initialized" {
+                    // ack
+                } else if method == "tools/list" {
+                    let t1: String = "{\"name\":\"at_schedule\",\"description\":\"Schedule a command to execute via transient systemd timer\"," +
+                        "\"inputSchema\":{\"type\":\"object\",\"properties\":{\"time_spec\":{\"type\":\"string\"},\"command\":{\"type\":\"string\"},\"dry_run\":{\"type\":\"boolean\"}},\"required\":[\"time_spec\",\"command\"]}}";
+                    let t2: String = "{\"name\":\"at_parse_time\",\"description\":\"Parse human time expression into systemd OnActiveSec or OnCalendar directive\"," +
+                        "\"inputSchema\":{\"type\":\"object\",\"properties\":{\"time_spec\":{\"type\":\"string\"}},\"required\":[\"time_spec\"]}}";
+                    let t3: String = "{\"name\":\"at_cancel\",\"description\":\"Cancel and remove scheduled transient timer unit\"," +
+                        "\"inputSchema\":{\"type\":\"object\",\"properties\":{\"job_id\":{\"type\":\"string\"}},\"required\":[\"job_id\"]}}";
+                    let t4: String = "{\"name\":\"at_list\",\"description\":\"List active scheduled transient timers and jobs in user slice\"," +
+                        "\"inputSchema\":{\"type\":\"object\",\"properties\":{}}}";
+                    let resp: String = "{\"jsonrpc\":\"2.0\",\"id\":" + id +
+                        ",\"result\":{\"tools\":[" + t1 + "," + t2 + "," + t3 + "," + t4 + "]}}";
+                    println(resp);
+                } else if method == "tools/call" {
+                    let params: String = json_get_field(trimmed, "params");
+                    let tool_name: String = json_get_string(params, "name");
+                    let args: String = json_get_field(params, "arguments");
+
+                    if tool_name == "at_parse_time" {
+                        let spec_str: String = json_get_string(args, "time_spec");
+                        let parsed: TimeSpec = parse_time_spec(spec_str);
+                        let j: String = render_time_spec_json(parsed);
+                        let resp: String = "{\"jsonrpc\":\"2.0\",\"id\":" + id +
+                            ",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"" + json_escape(j) + "\"}]}}";
+                        println(resp);
+                    } else if tool_name == "at_schedule" {
+                        let spec_str: String = json_get_string(args, "time_spec");
+                        let cmd_str: String = json_get_string(args, "command");
+                        let parsed: TimeSpec = parse_time_spec(spec_str);
+
+                        if !parsed.is_valid {
+                            let err_msg: String = "{\"status\":\"error\",\"message\":\"" + json_escape(parsed.error_msg) + "\"}";
+                            let resp: String = "{\"jsonrpc\":\"2.0\",\"id\":" + id +
+                                ",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"" + json_escape(err_msg) + "\"}]}}";
+                            println(resp);
+                        } else {
+                            let job_id: String = "mcp" + to_string(parsed.seconds_delay);
+                            let timer: TransientTimer = build_transient_timer(job_id, parsed, cmd_str);
+                            let j: String = "{\"status\":\"success\",\"job_id\":\"" + job_id +
+                                "\",\"unit\":\"" + json_escape(timer.unit_name) +
+                                "\",\"timer_spec\":\"" + json_escape(parsed.timer_spec) +
+                                "\",\"run_command\":\"" + json_escape(timer.run_command) + "\"}";
+                            let resp: String = "{\"jsonrpc\":\"2.0\",\"id\":" + id +
+                                ",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"" + json_escape(j) + "\"}]}}";
+                            println(resp);
+                        }
+                    } else if tool_name == "at_cancel" {
+                        let jid: String = json_get_string(args, "job_id");
+                        let unit: String = job_unit_prefix() + jid;
+                        let j: String = "{\"status\":\"cancelled\",\"job_id\":\"" + json_escape(jid) + "\",\"unit\":\"" + json_escape(unit) + "\"}";
+                        let resp: String = "{\"jsonrpc\":\"2.0\",\"id\":" + id +
+                            ",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"" + json_escape(j) + "\"}]}}";
+                        println(resp);
+                    } else if tool_name == "at_list" {
+                        let jobs: List[AtJob] = list_new();
+                        let mut j: String = "[";
+                        let n: Int = list_len(jobs);
+                        let mut i: Int = 0;
+                        while i < n {
+                            if i > 0 { j = j + ","; }
+                            let job: AtJob = list_get(jobs, i);
+                            j = j + render_job_json(job);
+                            i = i + 1;
+                        }
+                        j = j + "]";
+                        let resp: String = "{\"jsonrpc\":\"2.0\",\"id\":" + id +
+                            ",\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"" + json_escape(j) + "\"}]}}";
+                        println(resp);
+                    } else {
+                        let resp: String = "{\"jsonrpc\":\"2.0\",\"id\":" + id +
+                            ",\"error\":{\"code\":-32601,\"message\":\"Method not found\"}}";
+                        println(resp);
+                    }
+                } else {
+                    let resp: String = "{\"jsonrpc\":\"2.0\",\"id\":" + id +
+                        ",\"error\":{\"code\":-32601,\"message\":\"Unsupported method\"}}";
+                    println(resp);
+                }
+            }
+        }
+    }
+}

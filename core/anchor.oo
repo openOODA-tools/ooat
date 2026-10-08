@@ -1,0 +1,19 @@
+// # ooat Core Subsystem Anchor
+//
+// Logline: Consolidates time specification parsers, job models, and timer synthesizers.
+//
+// Setup: Root barrel shim for core scheduling domain.
+//
+// Beats:
+//   1. Re-export time specification models and relative interval parsers.
+//   2. Re-export AtJob models and identifier helpers.
+//   3. Re-export transient systemd timer generators and queue parsers.
+
+import "core/time_spec.oo";
+import "core/job_entry.oo";
+import "core/timer_transient.oo";
+import "core/queue_parser.oo";
+
+pub fn core_version() -> String {
+    return "0.2.0";
+}

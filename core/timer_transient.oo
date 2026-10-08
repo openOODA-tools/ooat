@@ -1,0 +1,54 @@
+// # Transient Systemd Timer Generator
+//
+// Logline: Synthesizes systemd unit definitions and systemd-run invocation strings.
+//
+// Setup: Pure record processor generating compliant systemd-native timer units.
+//
+// Beats:
+//   1. Build transient .timer unit definition with OnActiveSec or OnCalendar directive.
+//   2. Build companion oneshot .service unit definition encapsulating command execution.
+//   3. Construct canonical systemd-run CLI argument vector for user slice execution.
+
+import "core/time_spec.oo";
+import "core/job_entry.oo";
+
+pub type TransientTimer = struct {
+    unit_name: String,
+    timer_content: String,
+    service_content: String,
+    run_command: String
+};
+
+pub fn build_transient_timer(
+    job_id: String,
+    spec: TimeSpec,
+    command: String
+) -> TransientTimer {
+    let unit: String = job_unit_prefix() + job_id;
+    let mut timer_body: String = "[Unit]\nDescription=ooat scheduled job #" + job_id + "\n\n[Timer]\n";
+
+    if spec.kind == "active" {
+        timer_body = timer_body + "OnActiveSec=" + spec.timer_spec + "\n";
+    } else {
+        timer_body = timer_body + "OnCalendar=" + spec.timer_spec + "\n";
+    }
+    timer_body = timer_body + "RemainAfterElapse=no\n";
+
+    let mut service_body: String = "[Unit]\nDescription=ooat oneshot runner #" + job_id + "\n\n[Service]\nType=oneshot\n";
+    service_body = service_body + "ExecStart=" + command + "\n";
+
+    let mut run_cmd: String = "systemd-run --user --unit=" + unit + " ";
+    if spec.kind == "active" {
+        run_cmd = run_cmd + "--on-active=" + spec.timer_spec + " ";
+    } else {
+        run_cmd = run_cmd + "--on-calendar=\"" + spec.timer_spec + "\" ";
+    }
+    run_cmd = run_cmd + "-- " + command;
+
+    return TransientTimer {
+        unit_name: unit,
+        timer_content: timer_body,
+        service_content: service_body,
+        run_command: run_cmd
+    };
+}

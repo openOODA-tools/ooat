@@ -1,0 +1,10 @@
+Package: ooat
+Version: 0.2.0-1
+Section: utils
+Priority: optional
+Architecture: amd64
+Maintainer: openOODA-tools <ops@openooda.org>
+Depends: libc6
+Description: Single-run scheduled command coordinator backed by transient systemd timer units.
+ Capability-bounded openOODA utility with zero ambient authority,
+ transient systemd timer unit coordination, and native Model Context Protocol (MCP) surface.

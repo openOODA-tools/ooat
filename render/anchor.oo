@@ -1,0 +1,16 @@
+// # Render Anchor Module
+//
+// Logline: Re-exports render formatting and terminal presentation facilities.
+//
+// Setup: Pure anchor re-exporting rendering components.
+//
+// Beats:
+//   1. Re-export job table and row formatting functions.
+//   2. Re-export transient timer unit preview renderers.
+//   3. Re-export JSON serializers for jobs and time specifications.
+
+import "render/at_theme.oo";
+
+pub fn render_version() -> String {
+    return "0.2.0";
+}

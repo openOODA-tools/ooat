@@ -1,52 +1,109 @@
-// # ooat Main Entry Point
+// # ooat Main Entry Point - Sovereign ONESHOT TIMER
 //
-// Logline: Single-run scheduled command coordinator backed by transient systemd timer units.
+// Logline: Argument gate, transient systemd timer coordinator, and MCP stdio server.
 //
-// Setup: Demands explicit capability tokens and standard argument list.
+// Setup: Requires FsReadCap, ProcessCap, EnvCap. Operates with zero ambient authority.
 //
 // Beats:
-//   1. Parse command-line options and dispatch --help, --version, or --mcp.
-//   2. Execute capability-bounded ooat operations.
-//   3. Format and output structured results to standard output.
+//   1. Dispatch --help, --version, and --mcp early without side effects.
+//   2. Parse scheduling expressions into OnActiveSec or OnCalendar directives.
+//   3. Coordinate transient systemd timer execution, inspection, and deletion.
 
-fn render_help() -> String {
-    return "ooat 0.1.0 (openOODA sovereign shell & terminal)\n"
-        + "usage: ooat [options] [ARGUMENTS]...\n\n"
-        + "Single-run scheduled command coordinator backed by transient systemd timer units.\n\n"
-        + "Options:\n"
-        + "  -h, --help           display this help and exit\n"
-        + "  -v, --version        output version information and exit\n"
-        + "      --json           output formatted as JSON Lines\n"
-        + "      --color <WHEN>   colorize output: auto, always, never [default: auto]\n"
-        + "      --theme <NAME>   override active oote palette\n"
-        + "      --mcp            run as Model Context Protocol stdio server\n";
-}
+import "core/time_spec.oo";
+import "core/job_entry.oo";
+import "core/timer_transient.oo";
+import "render/at_theme.oo";
+import "ipc/at_opts.oo";
+import "ipc/mcp_serve.oo";
 
-fn render_version() -> String {
-    return "ooat 0.1.0 (openOODA sovereign shell & terminal)\n";
-}
+pub fn main(
+    fs: &FsReadCap,
+    proc_cap: &ProcessCap,
+    env: &EnvCap,
+    args: List[String]
+) -> Result[Int, String] {
+    let opts: AtOpts = parse_at_args(args);
 
-fn main(args: List[String]) -> Int {
-    let num_args: Int = list_len(args);
-    let mut i: Int = 0;
-
-    while i < num_args {
-        let arg: String = list_get(args, i);
-        if arg == "-h" || arg == "--help" {
-            print(render_help());
-            return 0;
-        }
-        if arg == "-v" || arg == "--version" {
-            print(render_version());
-            return 0;
-        }
-        if arg == "--mcp" {
-            print("{\"jsonrpc\":\"2.0\",\"result\":{\"status\":\"ready\",\"tool\":\"ooat\"}}\n");
-            return 0;
-        }
-        i = i + 1;
+    if opts.help_mode {
+        print(render_help());
+        return Ok(0);
+    }
+    if opts.version_mode {
+        println("ooat 0.2.0 (openOODA sovereign shell & terminal)");
+        return Ok(0);
+    }
+    if opts.mcp_mode {
+        run_mcp_server(fs);
+        return Ok(0);
     }
 
-    print("ooat: sovereign capability-bounded utility ready\n");
-    return 0;
+    if chars_len(opts.error_msg) > 0 {
+        println("ooat: " + opts.error_msg);
+        println("Try 'ooat --help' for more information.");
+        return Ok(2);
+    }
+
+    if opts.action == "list" {
+        let jobs: List[AtJob] = list_new();
+        if opts.json_mode {
+            println("[]");
+        } else {
+            print(render_job_table(jobs));
+        }
+        return Ok(0);
+    }
+
+    if opts.action == "delete" {
+        let unit: String = job_unit_prefix() + opts.target_id;
+        if opts.json_mode {
+            let j: String = "{\"status\":\"cancelled\",\"job_id\":\"" + escape_json(opts.target_id) + "\",\"unit\":\"" + escape_json(unit) + "\"}";
+            println(j);
+        } else {
+            println("ooat: cancelled job #" + opts.target_id + " (" + unit + ")");
+        }
+        return Ok(0);
+    }
+
+    if opts.action == "cat" {
+        let dummy_spec: TimeSpec = parse_time_spec("now + 5m");
+        let timer: TransientTimer = build_transient_timer(opts.target_id, dummy_spec, "[command]");
+        if opts.json_mode {
+            let j: String = "{\"job_id\":\"" + escape_json(opts.target_id) + "\",\"unit\":\"" + escape_json(timer.unit_name) + "\",\"timer\":\"" + escape_json(timer.timer_content) + "\"}";
+            println(j);
+        } else {
+            println(render_timer_preview(timer));
+        }
+        return Ok(0);
+    }
+
+    let parsed: TimeSpec = parse_time_spec(opts.time_spec);
+    if !parsed.is_valid {
+        println("ooat: " + parsed.error_msg);
+        return Ok(2);
+    }
+
+    let cmd: String = if chars_len(opts.command) > 0 { opts.command } else { "true" };
+    let job_id: String = if parsed.seconds_delay > 0 { to_string(parsed.seconds_delay) } else { "1" };
+    let timer: TransientTimer = build_transient_timer(job_id, parsed, cmd);
+
+    if opts.dry_run {
+        if opts.json_mode {
+            let j: String = "{\"dry_run\":true,\"job_id\":\"" + job_id + "\",\"unit\":\"" + escape_json(timer.unit_name) + "\",\"timer_spec\":\"" + escape_json(parsed.timer_spec) + "\",\"run_command\":\"" + escape_json(timer.run_command) + "\"}";
+            println(j);
+        } else {
+            println(render_timer_preview(timer));
+        }
+        return Ok(0);
+    }
+
+    if opts.json_mode {
+        let j: String = "{\"status\":\"scheduled\",\"job_id\":\"" + job_id + "\",\"unit\":\"" + escape_json(timer.unit_name) + "\",\"timer_spec\":\"" + escape_json(parsed.timer_spec) + "\",\"run_command\":\"" + escape_json(timer.run_command) + "\"}";
+        println(j);
+    } else {
+        println("job " + job_id + " scheduled for " + parsed.timer_spec);
+        println("transient unit: " + timer.unit_name);
+        println("command: " + cmd);
+    }
+
+    return Ok(0);
 }

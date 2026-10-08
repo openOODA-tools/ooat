@@ -1,0 +1,133 @@
+// # CLI Option Parser for ooat
+//
+// Logline: Parses command-line arguments for single-run scheduled command coordination.
+//
+// Setup: Pure string list processor without ambient side effects.
+//
+// Beats:
+//   1. Identify scheduling, listing, deletion, and preview operations.
+//   2. Extract time specifications and target command vectors.
+//   3. Dispatch help, version, and Model Context Protocol modes.
+
+pub type AtOpts = struct {
+    action: String,
+    time_spec: String,
+    command: String,
+    target_id: String,
+    dry_run: Bool,
+    json_mode: Bool,
+    mcp_mode: Bool,
+    help_mode: Bool,
+    version_mode: Bool,
+    error_msg: String
+};
+
+pub fn default_opts() -> AtOpts {
+    return AtOpts {
+        action: "schedule",
+        time_spec: "",
+        command: "",
+        target_id: "",
+        dry_run: false,
+        json_mode: false,
+        mcp_mode: false,
+        help_mode: false,
+        version_mode: false,
+        error_msg: ""
+    };
+}
+
+pub fn parse_at_args(args: List[String]) -> AtOpts {
+    let mut opts: AtOpts = default_opts();
+    let n: Int = list_len(args);
+    let mut positional: List[String] = list_new();
+    let mut i: Int = 0;
+
+    while i < n {
+        let arg: String = list_get(args, i);
+
+        if arg == "-h" || arg == "--help" {
+            opts.help_mode = true;
+            return opts;
+        } else if arg == "-v" || arg == "--version" {
+            opts.version_mode = true;
+            return opts;
+        } else if arg == "--mcp" {
+            opts.mcp_mode = true;
+            return opts;
+        } else if arg == "-l" || arg == "--list" {
+            opts.action = "list";
+        } else if arg == "-n" || arg == "--dry-run" {
+            opts.dry_run = true;
+        } else if arg == "-j" || arg == "--json" {
+            opts.json_mode = true;
+        } else if arg == "-r" || arg == "-d" || arg == "--delete" || arg == "--remove" {
+            opts.action = "delete";
+            if i + 1 < n {
+                i = i + 1;
+                opts.target_id = list_get(args, i);
+            } else {
+                opts.error_msg = "Option " + arg + " requires a job ID";
+                return opts;
+            }
+        } else if arg == "-c" || arg == "--cat" {
+            opts.action = "cat";
+            if i + 1 < n {
+                i = i + 1;
+                opts.target_id = list_get(args, i);
+            } else {
+                opts.error_msg = "Option " + arg + " requires a job ID";
+                return opts;
+            }
+        } else if str_starts_with(arg, "-") {
+            opts.error_msg = "Unknown option: " + arg;
+            return opts;
+        } else {
+            positional = list_push(positional, arg);
+        }
+        i = i + 1;
+    }
+
+    if opts.action == "list" || opts.action == "delete" || opts.action == "cat" {
+        return opts;
+    }
+
+    let pos_len: Int = list_len(positional);
+    if pos_len == 0 {
+        opts.help_mode = true;
+        return opts;
+    }
+
+    opts.time_spec = list_get(positional, 0);
+    if pos_len > 1 {
+        let mut cmd_acc: String = "";
+        let mut k: Int = 1;
+        while k < pos_len {
+            if k > 1 { cmd_acc = cmd_acc + " "; }
+            cmd_acc = cmd_acc + list_get(positional, k);
+            k = k + 1;
+        }
+        opts.command = cmd_acc;
+    }
+
+    return opts;
+}
+
+pub fn render_help() -> String {
+    return "Usage: ooat [OPTIONS] [TIME_SPEC] [COMMAND...]\n\n" +
+        "Single-run scheduled command coordinator backed by transient systemd timer units.\n\n" +
+        "Commands & Operations:\n" +
+        "  ooat <time> <cmd...>     Schedule command to execute at specified time or interval\n" +
+        "  -l, --list               List active scheduled transient timers and jobs\n" +
+        "  -d, --delete <JOB_ID>    Cancel and remove scheduled timer unit\n" +
+        "  -c, --cat <JOB_ID>       Display transient unit definition for job\n\n" +
+        "Time Specifications:\n" +
+        "  now + 5m, +10m, 30m      Relative delay (s=seconds, m=minutes, h=hours, d=days)\n" +
+        "  14:30, 09:00             Clock time on calendar day (systemd OnCalendar trigger)\n\n" +
+        "Options:\n" +
+        "  -n, --dry-run            Synthesize transient systemd unit without arming timer\n" +
+        "  -j, --json               Output records and unit definitions as JSON\n" +
+        "      --mcp                Run as Model Context Protocol stdio server\n" +
+        "  -v, --version            Output version information and exit\n" +
+        "  -h, --help               Display this help and exit\n";
+}
